@@ -1,3 +1,6 @@
 /full_dataset
 /venv
 /__pycache__
+
+/utils/__pycache__
+/services/__pycache__
