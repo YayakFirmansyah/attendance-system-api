@@ -12,7 +12,7 @@ class Config:
     
     # Face Recognition
     FACE_CONFIDENCE_THRESHOLD = 0.7
-    RECOGNITION_THRESHOLD = 0.6
+    RECOGNITION_THRESHOLD = 0.7
     IMAGE_SIZE = (160, 160)
     
     # Paths

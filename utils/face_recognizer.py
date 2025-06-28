@@ -1,5 +1,3 @@
-# attendance-api-enhanced/utils/face_recognizer.py
-
 import numpy as np
 import pickle
 import os
@@ -33,6 +31,7 @@ class AdvancedFaceRecognizer:
             print(f"Features shape: {X.shape}")
             print(f"Classes: {len(set(labels))} unique people")
             print(f"Samples per class: {[list(y).count(label) for label in set(labels)]}")
+            print(f"🏷️ Original labels: {set(labels)}")
             
             # Check for invalid values
             if np.any(np.isnan(X)) or np.any(np.isinf(X)):
@@ -42,6 +41,9 @@ class AdvancedFaceRecognizer:
             # Encode labels
             self.label_encoder = LabelEncoder()
             y_encoded = self.label_encoder.fit_transform(y)
+            
+            print(f"🔢 Label encoder classes: {list(self.label_encoder.classes_)}")
+            print(f"🔢 Encoded labels sample: {y_encoded[:5]} (from {y[:5]})")
             
             # Feature scaling (important for SVM)
             self.scaler = StandardScaler()
@@ -91,6 +93,19 @@ class AdvancedFaceRecognizer:
                 print(classification_report(y_test, y_pred, target_names=target_names, zero_division=0))
             else:
                 print("✓ SVM training completed (no validation split)")
+            
+            # Test beberapa sample untuk memastikan prediction bekerja
+            print("\n🧪 Testing predictions on training data...")
+            for i in range(min(3, len(X_scaled))):
+                test_encoding = X_scaled[i:i+1]
+                true_label = self.label_encoder.inverse_transform([y_encoded[i]])[0]
+                
+                pred_proba = self.svm_model.predict_proba(test_encoding)[0]
+                pred_class_idx = np.argmax(pred_proba)
+                pred_label = self.label_encoder.inverse_transform([pred_class_idx])[0]
+                confidence = pred_proba[pred_class_idx]
+                
+                print(f"   Sample {i}: True='{true_label}' → Pred='{pred_label}' ({confidence:.3f}) {'✅' if pred_label == true_label else '❌'}")
             
             # Save model
             self.save_model()
@@ -158,47 +173,101 @@ class AdvancedFaceRecognizer:
             svm.fit(X_train, y_train)
             return svm
     
-    def predict(self, encoding, return_probabilities=False):
+    def predict(self, encoding, return_probabilities=False, debug=False):
         """Predict person from encoding with confidence"""
         try:
             if self.svm_model is None or self.label_encoder is None or self.scaler is None:
-                print("Model not trained")
+                if debug:
+                    print("❌ Model components not loaded")
+                if return_probabilities:
+                    return None, 0.0, {}
                 return None, 0.0
-                
+
             # Prepare encoding
             encoding = np.array(encoding).reshape(1, -1)
             
+            if debug:
+                print(f"🔍 Input encoding shape: {encoding.shape}")
+                print(f"🔍 Encoding sample: {encoding[0][:5]}")
+
             # Scale features
             encoding_scaled = self.scaler.transform(encoding)
             
+            if debug:
+                print(f"🔍 Scaled encoding sample: {encoding_scaled[0][:5]}")
+
             # Get prediction probabilities
             probabilities = self.svm_model.predict_proba(encoding_scaled)[0]
             
+            if debug:
+                print(f"🔍 Raw probabilities: {probabilities}")
+                print(f"🔍 Available classes: {list(self.label_encoder.classes_)}")
+
             # Get best prediction
             best_class_idx = np.argmax(probabilities)
             confidence = probabilities[best_class_idx]
-            
-            # Apply threshold
-            if confidence < self.threshold:
-                if return_probabilities:
-                    return None, confidence, probabilities
-                return None, confidence
-            
+
             # Get label
             predicted_label = self.label_encoder.inverse_transform([best_class_idx])[0]
             
+            if debug:
+                print(f"🔍 Best class index: {best_class_idx}")
+                print(f"🔍 Predicted label: '{predicted_label}'")
+                print(f"🔍 Confidence: {confidence:.3f}")
+                print(f"🔍 Threshold: {self.threshold}")
+
+            # Apply threshold (untuk production use predict_with_threshold)
+            if confidence < self.threshold:
+                if debug:
+                    print(f"⚠️ Low confidence prediction: {predicted_label} ({confidence:.3f} < {self.threshold})")
+
             if return_probabilities:
                 # Return all class probabilities
                 class_probs = {}
                 for i, prob in enumerate(probabilities):
                     label = self.label_encoder.inverse_transform([i])[0]
                     class_probs[label] = float(prob)
+                    
+                if debug:
+                    print(f"🔍 All probabilities: {class_probs}")
+                    
                 return predicted_label, confidence, class_probs
-            
+
             return predicted_label, confidence
-            
+
         except Exception as e:
-            print(f"Prediction error: {e}")
+            if debug:
+                print(f"❌ Prediction error: {e}")
+                import traceback
+                traceback.print_exc()
+            else:
+                print(f"Prediction error: {e}")
+            if return_probabilities:
+                return None, 0.0, {}
+            return None, 0.0
+
+    def predict_with_threshold(self, encoding, return_probabilities=False):
+        """Predict with strict threshold checking (for production)"""
+        try:
+            # Get prediction without threshold
+            if return_probabilities:
+                predicted_label, confidence, class_probs = self.predict(encoding, return_probabilities=True)
+            else:
+                predicted_label, confidence = self.predict(encoding, return_probabilities=False)
+
+            # Apply strict threshold
+            if confidence < self.threshold:
+                if return_probabilities:
+                    return None, confidence, class_probs if 'class_probs' in locals() else {}
+                return None, confidence
+
+            # Return result if confidence is high enough
+            if return_probabilities:
+                return predicted_label, confidence, class_probs
+            return predicted_label, confidence
+
+        except Exception as e:
+            print(f"Threshold prediction error: {e}")
             if return_probabilities:
                 return None, 0.0, {}
             return None, 0.0
@@ -222,6 +291,37 @@ class AdvancedFaceRecognizer:
         except Exception as e:
             print(f"Batch prediction error: {e}")
             return []
+    
+    def debug_prediction_detailed(self, encoding, true_label=None):
+        """Debug prediction dengan detail lengkap"""
+        print(f"\n🔍 DETAILED PREDICTION DEBUG")
+        print("=" * 50)
+        
+        if true_label:
+            print(f"Expected label: '{true_label}'")
+        
+        result = self.predict(encoding, return_probabilities=True, debug=True)
+        
+        if len(result) == 3:
+            predicted_label, confidence, probabilities = result
+            
+            print(f"\n📊 FINAL RESULT:")
+            print(f"   Predicted: '{predicted_label}'")
+            print(f"   Confidence: {confidence:.3f}")
+            print(f"   Above threshold: {confidence >= self.threshold}")
+            
+            if true_label:
+                is_correct = str(predicted_label) == str(true_label)
+                print(f"   Correct: {'✅' if is_correct else '❌'}")
+                
+                if not is_correct:
+                    print(f"   Expected: '{true_label}' vs Got: '{predicted_label}'")
+                    print(f"   Type match: {type(true_label)} vs {type(predicted_label)}")
+            
+            return predicted_label, confidence, probabilities
+        else:
+            print(f"❌ Prediction failed: {result}")
+            return None, 0.0, {}
     
     def get_model_info(self):
         """Get information about the trained model"""
@@ -285,7 +385,7 @@ class AdvancedFaceRecognizer:
             # Print model info
             info = model_data.get('model_info', {})
             if info:
-                print(f"Classes: {info.get('n_classes', 0)}")
+                print(f"Classes: {info.get('classes', [])}")
                 print(f"Support vectors: {info.get('total_support_vectors', 0)}")
                 print(f"Kernel: {info.get('kernel', 'unknown')}")
             
@@ -297,8 +397,9 @@ class AdvancedFaceRecognizer:
     
     def update_threshold(self, new_threshold):
         """Update recognition threshold"""
+        old_threshold = self.threshold
         self.threshold = new_threshold
-        print(f"Recognition threshold updated to: {new_threshold}")
+        print(f"Recognition threshold updated: {old_threshold} → {new_threshold}")
         
     def validate_model(self):
         """Validate that model is properly loaded"""
