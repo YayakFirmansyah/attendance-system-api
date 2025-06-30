@@ -1,26 +1,29 @@
+# attendance-system-api/config.py
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class Config:
-    # Database
-    DB_HOST = os.getenv('DB_HOST', 'localhost')
-    DB_USER = os.getenv('DB_USER', 'root')
-    DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-    DB_NAME = os.getenv('DB_NAME', 'attendance_system')
+    # API Configuration
+    HOST = os.getenv('HOST', '0.0.0.0')
+    PORT = int(os.getenv('PORT', 5000))
+    DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
     
-    # Face Recognition
-    FACE_CONFIDENCE_THRESHOLD = 0.7
-    RECOGNITION_THRESHOLD = 0.7
-    IMAGE_SIZE = (160, 160)
+    # Face Recognition Thresholds
+    RECOGNITION_THRESHOLD = float(os.getenv('RECOGNITION_THRESHOLD', 0.75))
+    FACE_CONFIDENCE_THRESHOLD = float(os.getenv('FACE_CONFIDENCE_THRESHOLD', 0.9))
+    
+    # Image Processing
+    IMAGE_SIZE = (160, 160)  # Standard FaceNet input size
     
     # Paths
-    DATASET_PATH = 'dataset'
-    UPLOADS_PATH = 'uploads'
-    MODELS_PATH = 'models'
+    DATASET_PATH = os.getenv('DATASET_PATH', 'dataset')
+    MODEL_PATH = os.getenv('MODEL_PATH', 'models')
     
-    # Flask
-    DEBUG = True
-    HOST = '0.0.0.0'
-    PORT = 5000
+    # Database
+    VERIFICATION_DB_PATH = os.path.join(MODEL_PATH, 'verification_database.pkl')
+    
+    # Ensure directories exist
+    os.makedirs(DATASET_PATH, exist_ok=True)
+    os.makedirs(MODEL_PATH, exist_ok=True)
