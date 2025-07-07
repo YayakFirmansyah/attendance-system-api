@@ -1,180 +1,73 @@
-# utils/face_encoder.py - Fixed and Simplified
-import tensorflow as tf
+# utils/face_encoder.py - FaceNet SIMPLE
 import numpy as np
-import cv2
-from config import Config
+from keras_facenet import FaceNet
 
-class FaceNetEncoder:
+class FaceEncoder:
     def __init__(self):
-        self.model = None
-        self.image_size = Config.IMAGE_SIZE
-        self.model_type = "unknown"
-        self.load_facenet()
-        
-    def load_facenet(self):
-        """Load FaceNet model with fallback options"""
+        self.embedder = FaceNet()
+        print("✓ FaceNet encoder initialized")
+    
+    def encode_face(self, face_image):
+        """
+        Convert face image menjadi 512-dimensional embedding
+        face_image: RGB image (160, 160, 3) atau akan di-resize otomatis
+        """
         try:
-            print("🔄 Loading FaceNet model...")
+            # Pastikan input adalah numpy array
+            if not isinstance(face_image, np.ndarray):
+                face_image = np.array(face_image)
             
-            # Option 1: Try keras-facenet (recommended)
-            try:
-                from keras_facenet import FaceNet
-                self.model = FaceNet()
-                self.model_type = "keras_facenet"
-                print("✅ Keras-FaceNet loaded successfully")
-                return True
-            except ImportError:
-                print("⚠️  keras-facenet not available, building custom model...")
-            except Exception as e:
-                print(f"⚠️  keras-facenet error: {e}, building custom model...")
-            
-            # Option 2: Build simple custom model
-            return self.build_simple_model()
+            # Pastikan shape benar
+            if len(face_image.shape) == 3:
+                # Resize ke 160x160 jika perlu
+                if face_image.shape[:2] != (160, 160):
+                    import cv2
+                    face_image = cv2.resize(face_image, (160, 160))
                 
-        except Exception as e:
-            print(f"❌ FaceNet loading failed: {e}")
-            return False
-    
-    def build_simple_model(self):
-        """Build simple but effective CNN model"""
-        try:
-            print("🔧 Building simple CNN encoder...")
-            
-            inputs = tf.keras.Input(shape=(*self.image_size, 3))
-            
-            # Normalization
-            x = tf.keras.layers.Lambda(lambda x: tf.cast(x, tf.float32) / 255.0)(inputs)
-            
-            # Simple but effective CNN architecture
-            x = tf.keras.layers.Conv2D(32, (3, 3), activation='relu')(x)
-            x = tf.keras.layers.MaxPooling2D((2, 2))(x)
-            
-            x = tf.keras.layers.Conv2D(64, (3, 3), activation='relu')(x)
-            x = tf.keras.layers.MaxPooling2D((2, 2))(x)
-            
-            x = tf.keras.layers.Conv2D(128, (3, 3), activation='relu')(x)
-            x = tf.keras.layers.MaxPooling2D((2, 2))(x)
-            
-            x = tf.keras.layers.Conv2D(256, (3, 3), activation='relu')(x)
-            x = tf.keras.layers.MaxPooling2D((2, 2))(x)
-            
-            # Global average pooling instead of flatten
-            x = tf.keras.layers.GlobalAveragePooling2D()(x)
-            
-            # Dense layers
-            x = tf.keras.layers.Dense(1024, activation='relu')(x)
-            x = tf.keras.layers.Dropout(0.5)(x)
-            
-            x = tf.keras.layers.Dense(512, activation='relu')(x)
-            
-            # L2 normalization for embeddings
-            embeddings = tf.keras.layers.Lambda(
-                lambda x: tf.nn.l2_normalize(x, axis=1)
-            )(x)
-            
-            self.model = tf.keras.Model(inputs, embeddings)
-            self.model_type = "simple_cnn"
-            
-            # Compile model
-            self.model.compile(optimizer='adam', loss='mse')
-            
-            # Warm up model
-            print("🔥 Warming up model...")
-            for _ in range(3):
-                dummy = np.random.randint(0, 255, (1, *self.image_size, 3), dtype=np.uint8)
-                _ = self.model.predict(dummy, verbose=0)
-            
-            print("✅ Simple CNN encoder ready")
-            return True
-            
-        except Exception as e:
-            print(f"❌ Simple model build failed: {e}")
-            return False
-    
-    def preprocess_face(self, face):
-        """Simple but effective preprocessing"""
-        try:
-            # Validate input
-            if face is None or len(face.shape) != 3:
-                return None
-            
-            # Resize if needed
-            if face.shape[:2] != self.image_size:
-                face = cv2.resize(face, self.image_size, interpolation=cv2.INTER_AREA)
-            
-            # Simple histogram equalization for better lighting
-            yuv = cv2.cvtColor(face, cv2.COLOR_BGR2YUV)
-            yuv[:,:,0] = cv2.equalizeHist(yuv[:,:,0])
-            face = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR)
-            
-            # Ensure correct data type
-            face = face.astype(np.uint8)
-            
-            return face
-            
-        except Exception as e:
-            print(f"Preprocessing error: {e}")
-            return None
-    
-    def encode_face(self, face):
-        """Main encoding function"""
-        try:
-            if self.model is None:
-                print("❌ Model not loaded")
-                return None
-            
-            # Preprocess
-            processed_face = self.preprocess_face(face)
-            if processed_face is None:
-                return None
-            
-            # Add batch dimension
-            face_batch = np.expand_dims(processed_face, axis=0)
-            
-            # Generate encoding
-            if self.model_type == "keras_facenet":
-                # Use keras-facenet method
-                if hasattr(self.model, 'embeddings'):
-                    encoding = self.model.embeddings(face_batch)
-                    if hasattr(encoding, 'numpy'):
-                        encoding = encoding.numpy()
-                else:
-                    encoding = self.model.predict(face_batch, verbose=0)
+                # Expand dimensions untuk batch
+                face_batch = np.expand_dims(face_image, axis=0)
             else:
-                # Use custom model
-                encoding = self.model.predict(face_batch, verbose=0)
-            
-            # Handle batch dimension
-            if len(encoding.shape) > 1:
-                encoding = encoding[0]
-            
-            # Validate encoding
-            if np.any(np.isnan(encoding)) or np.any(np.isinf(encoding)):
-                print("⚠️  Invalid encoding detected")
+                print(f"❌ Invalid face image shape: {face_image.shape}")
                 return None
             
-            # Final normalization
-            norm = np.linalg.norm(encoding)
-            if norm > 0:
-                encoding = encoding / norm
-            else:
-                print("⚠️  Zero norm encoding")
-                return None
+            # Generate embedding
+            embedding = self.embedder.embeddings(face_batch)
             
-            return encoding
+            # Return as 1D array
+            return embedding[0]  # Shape: (512,)
             
         except Exception as e:
-            print(f"Encoding error: {e}")
+            print(f"❌ Face encoding error: {e}")
             return None
     
-    def get_model_info(self):
-        """Get model information"""
-        if self.model is None:
-            return None
+    def encode_faces_batch(self, face_images):
+        """
+        Encode multiple faces sekaligus (lebih efisien)
+        """
+        try:
+            if not face_images:
+                return []
             
-        return {
-            'model_type': self.model_type,
-            'image_size': self.image_size,
-            'encoding_dim': 512,
-            'model_loaded': True
-        }
+            # Prepare batch
+            batch = []
+            for face in face_images:
+                if not isinstance(face, np.ndarray):
+                    face = np.array(face)
+                
+                # Resize jika perlu
+                if face.shape[:2] != (160, 160):
+                    import cv2
+                    face = cv2.resize(face, (160, 160))
+                
+                batch.append(face)
+            
+            batch = np.array(batch)
+            
+            # Generate embeddings
+            embeddings = self.embedder.embeddings(batch)
+            
+            return embeddings  # Shape: (N, 512)
+            
+        except Exception as e:
+            print(f"❌ Batch encoding error: {e}")
+            return []

@@ -1,4 +1,4 @@
-# app.py - FIXED VERSION
+# app.py - SIMPLE VERSION (MTCNN + FaceNet + SVM)
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import cv2
@@ -7,302 +7,227 @@ import base64
 import os
 from datetime import datetime
 
-from config import Config
+# Import utils
 from utils.face_detector import FaceDetector
-from utils.face_encoder import FaceNetEncoder
-from utils.face_recognizer import AdvancedFaceRecognizer
-from utils.scalable_face_recognizer import ScalableFaceRecognizer
+from utils.face_encoder import FaceEncoder
+from utils.model_loader import ModelLoader
 
 app = Flask(__name__)
 CORS(app)
 
-# Initialize services
-print("🚀 Initializing Face Recognition API...")
-print("📊 Using: MTCNN + FaceNet + SVM")
+# Initialize components
+print("🚀 Initializing Face Recognition System...")
+print("📊 Components: MTCNN + FaceNet + SVM")
 
-face_detector = FaceDetector()
-face_encoder = FaceNetEncoder()
-face_recognizer = AdvancedFaceRecognizer()
-scalable_recognizer = ScalableFaceRecognizer()
+# Load components
+face_detector = FaceDetector(min_face_size=40, confidence_threshold=0.9)
+face_encoder = FaceEncoder()
+model_loader = ModelLoader(model_dir="models")
 
-print("🔄 Loading verification database...")
-scalable_recognizer.load_database()
-
-# Auto-load model if exists
-model_path = os.path.join(Config.MODEL_PATH, 'advanced_face_recognizer.pkl')
-if os.path.exists(model_path):
-    print("🔄 Loading existing model...")
-    if face_recognizer.load_model():
-        face_recognizer.update_threshold(Config.RECOGNITION_THRESHOLD)
-        print("✅ Model loaded successfully")
-    else:
-        print("❌ Model loading failed")
+# Load trained models
+print("\n🔄 Loading trained models from .pkl files...")
+if model_loader.load_models():
+    print("✅ All models loaded successfully!")
 else:
-    print("📝 No existing model found - need to train first")
+    print("❌ Failed to load models - check models/ folder")
 
 def decode_base64_image(base64_string):
-    """Decode base64 image to OpenCV format"""
+    """Decode base64 image ke OpenCV format"""
     try:
+        # Remove data URL prefix jika ada
         if ',' in base64_string:
             base64_string = base64_string.split(',')[1]
+        
+        # Decode
         image_data = base64.b64decode(base64_string)
         nparr = np.frombuffer(image_data, np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
         return image
+        
     except Exception as e:
-        print(f"Base64 decode error: {e}")
+        print(f"❌ Base64 decode error: {e}")
         return None
 
 @app.route('/api/health', methods=['GET'])
 def health():
-    """Health check"""
+    """Health check endpoint"""
+    model_info = model_loader.get_model_info()
+    
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'version': '2.0 - MTCNN + FaceNet + SVM',
-        'model_loaded': face_recognizer.svm_model is not None,
-        'database_students': len(scalable_recognizer.student_encodings),
-        'config': {
-            'recognition_threshold': Config.RECOGNITION_THRESHOLD,
-            'face_confidence_threshold': Config.FACE_CONFIDENCE_THRESHOLD
-        }
+        'version': 'Simple MTCNN + FaceNet + SVM',
+        'components': {
+            'face_detector': 'MTCNN',
+            'face_encoder': 'FaceNet (512d)',
+            'classifier': 'SVM from main.ipynb'
+        },
+        'model_info': model_info
     })
 
 @app.route('/api/verify-face', methods=['POST'])
 def verify_face():
-    """Main endpoint for face verification - FIXED"""
+    """
+    Main endpoint untuk face recognition
+    Input: base64 image
+    Output: detected faces dengan identity predictions
+    """
     try:
+        # Validate input
         data = request.get_json()
         if not data or 'image' not in data:
             return jsonify({
-                'success': False, 
+                'success': False,
                 'message': 'No image provided'
             }), 400
-
+        
+        # Check if models loaded
+        if not model_loader.is_loaded:
+            return jsonify({
+                'success': False,
+                'message': 'Models not loaded'
+            }), 500
+        
         # Decode image
         image = decode_base64_image(data['image'])
         if image is None:
             return jsonify({
-                'success': False, 
+                'success': False,
                 'message': 'Invalid image format'
             }), 400
-
-        print(f"🔍 Processing image: {image.shape}")
-
+        
+        print(f"📷 Processing image: {image.shape}")
+        
         # Detect faces
         faces = face_detector.detect_faces(image)
+        
         if not faces:
             return jsonify({
-                'success': False,
-                'message': 'No faces detected'
+                'success': True,
+                'message': 'No faces detected',
+                'results': []
             })
-
-        results = []
         
-        for i, face_detection in enumerate(faces):
-            try:
-                # Extract and encode face
-                face = face_detector.extract_face(image, face_detection)
-                if face is None:
-                    continue
-                    
-                encoding = face_encoder.encode_face(face)
-                if encoding is None:
-                    continue
-
-                # FIXED: Use verify_face (singular) instead of verify_faces
-                student_id, student_name, similarity, top_matches = scalable_recognizer.verify_face(
-                    encoding, top_k=5
-                )
-                
-                # Prepare result
-                result = {
-                    'face_id': int(i),
-                    'student_id': str(student_id) if student_id else None,
-                    'student_name': str(student_name) if student_name else None,
-                    'similarity': float(similarity) if similarity is not None else 0.0,
-                    'verified': bool(similarity >= scalable_recognizer.verification_threshold) if similarity is not None else False,
-                    'bounding_box': [int(x) for x in face_detection['box']],
-                    'mtcnn_confidence': float(face_detection['confidence']),
-                    'verification_threshold': float(scalable_recognizer.verification_threshold)
-                }
-                
-                # Add top matches if available
-                if top_matches:
-                    result['top_matches'] = [
-                        {
-                            'student_name': match.get('student_name', ''),
-                            'similarity': float(match.get('max_similarity', 0.0))
-                        }
-                        for match in top_matches[:3]
-                    ]
-                
-                results.append(result)
-                
-                print(f"Face {i}: {student_name or 'Unknown'} ({similarity:.3f})")
-                
-            except Exception as e:
-                print(f"Error processing face {i}: {e}")
+        print(f"👥 Detected {len(faces)} face(s)")
+        
+        # Process each face
+        results = []
+        for i, face_data in enumerate(faces):
+            face_crop = face_data['face']
+            box = face_data['box']
+            detection_confidence = face_data['confidence']
+            
+            # Preprocess face for FaceNet
+            processed_face = face_detector.preprocess_face(face_crop)
+            if processed_face is None:
                 continue
-
-        return jsonify({
+            
+            # Generate embedding
+            embedding = face_encoder.encode_face(processed_face)
+            if embedding is None:
+                continue
+            
+            # Predict identity dengan threshold rendah untuk SVM
+            predicted_name, recognition_confidence = model_loader.predict(
+                embedding, threshold=0.15  # Threshold rendah untuk SVM
+            )
+            
+            # Get all predictions untuk analisis
+            all_predictions = model_loader.get_all_predictions(embedding)
+            
+            # Enhanced verification logic
+            is_verified = False
+            if predicted_name != "unknown":
+                # Cek confidence gap - apakah prediksi terbaik cukup berbeda dari yang kedua
+                sorted_preds = sorted(all_predictions.items(), key=lambda x: x[1], reverse=True)
+                if len(sorted_preds) >= 2:
+                    confidence_gap = sorted_preds[0][1] - sorted_preds[1][1]
+                    # Verifikasi jika confidence >= 0.08 DAN gap >= 0.03
+                    is_verified = recognition_confidence >= 0.08 and confidence_gap >= 0.03
+                else:
+                    # Hanya 1 class, threshold lebih rendah
+                    is_verified = recognition_confidence >= 0.10
+                    
+                print(f"  🔍 Verification analysis:")
+                print(f"      Confidence: {recognition_confidence:.3f}")
+                if len(sorted_preds) >= 2:
+                    print(f"      Gap: {confidence_gap:.3f}")
+                print(f"      Verified: {is_verified}")
+            
+            # Hasil untuk face ini
+            face_result = {
+                'face_id': i + 1,
+                'bounding_box': {
+                    'x': int(box[0]),
+                    'y': int(box[1]),
+                    'width': int(box[2]),
+                    'height': int(box[3])
+                },
+                'detection_confidence': float(detection_confidence),
+                'predicted_name': predicted_name if is_verified else "unknown",
+                'recognition_confidence': float(recognition_confidence),
+                'verified': is_verified,
+                'student_name': predicted_name if is_verified else None,  # Untuk Laravel compatibility
+                'similarity': float(recognition_confidence),  # Untuk Laravel compatibility
+                'all_predictions': all_predictions
+            }
+            
+            results.append(face_result)
+            
+            print(f"  👤 Face {i+1}: {predicted_name} ({recognition_confidence:.3f})")
+        
+        # Response
+        response = {
             'success': True,
+            'message': f'Processed {len(results)} face(s)',
             'results': results,
             'total_faces': len(results),
-            'verified_count': sum(1 for r in results if r.get('verified', False)),
-            'processing_time': 0  # Could add timing if needed
+            'verified_faces': len([r for r in results if r['verified']])
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        print(f"❌ Verification error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Processing error: {str(e)}'
+        }), 500
+
+@app.route('/api/model-info', methods=['GET'])
+def model_info():
+    """Get detailed model information"""
+    try:
+        info = model_loader.get_model_info()
+        return jsonify({
+            'success': True,
+            'model_info': info
         })
-
     except Exception as e:
-        print(f"Verification error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False, 
-            'message': f'Verification error: {str(e)}'
-        }), 500
-
-@app.route('/api/add-student', methods=['POST'])
-def add_student():
-    """Add new student to verification database"""
-    try:
-        data = request.get_json()
-        required_fields = ['student_name', 'nim', 'images']
-        
-        for field in required_fields:
-            if field not in data:
-                return jsonify({
-                    'success': False, 
-                    'message': f'Missing required field: {field}'
-                }), 400
-
-        if len(data['images']) < 3:
-            return jsonify({
-                'success': False, 
-                'message': 'At least 3 images required'
-            }), 400
-
-        # Process images and generate encodings
-        encodings = []
-        for i, img_base64 in enumerate(data['images']):
-            image = decode_base64_image(img_base64)
-            if image is None:
-                continue
-                
-            faces = face_detector.detect_faces(image)
-            if not faces:
-                continue
-                
-            face = face_detector.extract_face(image, faces[0])
-            if face is None:
-                continue
-                
-            encoding = face_encoder.encode_face(face)
-            if encoding is not None:
-                encodings.append(encoding)
-
-        if len(encodings) < 2:
-            return jsonify({
-                'success': False,
-                'message': f'Only {len(encodings)} valid encodings generated, need at least 2'
-            }), 400
-
-        # Add to database
-        success = scalable_recognizer.add_student(
-            student_id=data['nim'],
-            student_name=data['student_name'],
-            nim=data['nim'],
-            kelas=data.get('class', ''),
-            encodings=encodings
-        )
-
-        if success:
-            scalable_recognizer.save_database()
-            return jsonify({
-                'success': True,
-                'message': 'Student added successfully',
-                'student_info': {
-                    'name': data['student_name'],
-                    'nim': data['nim'],
-                    'encoding_count': len(encodings)
-                }
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Failed to add student'
-            }), 500
-
-    except Exception as e:
-        print(f"Error adding student: {e}")
         return jsonify({
             'success': False,
-            'message': f'Error adding student: {str(e)}'
-        }), 500
-
-@app.route('/api/train', methods=['POST'])
-def train_model():
-    """Train model from dataset (fallback method)"""
-    try:
-        from services.dataset_processor import EnhancedDatasetProcessor
-        
-        dataset_processor = EnhancedDatasetProcessor()
-        
-        if not dataset_processor.validate_dataset():
-            return jsonify({
-                'success': False,
-                'message': 'Dataset validation failed'
-            }), 400
-
-        encodings, labels = dataset_processor.process_dataset()
-        
-        if len(encodings) == 0:
-            return jsonify({
-                'success': False,
-                'message': 'No faces found in dataset'
-            })
-
-        success = face_recognizer.train(encodings, labels)
-        
-        if success:
-            face_recognizer.update_threshold(Config.RECOGNITION_THRESHOLD)
-            face_recognizer.save_model()
-            
-            return jsonify({
-                'success': True,
-                'message': f'Model trained with {len(encodings)} encodings',
-                'statistics': {
-                    'total_encodings': len(encodings),
-                    'unique_students': len(set(labels)),
-                    'students': list(set(labels))
-                }
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Training failed'
-            })
-
-    except Exception as e:
-        print(f"Training error: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Training error: {str(e)}'
+            'message': str(e)
         }), 500
 
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print("🚀 FACE RECOGNITION API v2.0 - FIXED")
-    print("📊 Components: MTCNN + FaceNet + SVM")
-    print("="*60)
-    print(f"📁 Dataset path: {Config.DATASET_PATH}")
-    print(f"🎯 Recognition threshold: {Config.RECOGNITION_THRESHOLD}")
-    print(f"👥 Students in database: {len(scalable_recognizer.student_encodings)}")
-    print("\n📡 Available endpoints:")
-    print("- GET  /api/health")
-    print("- POST /api/verify-face")
-    print("- POST /api/add-student") 
-    print("- POST /api/train")
+    print("🎯 FACE RECOGNITION API - SIMPLE VERSION")
+    print("📊 MTCNN + FaceNet + SVM (.pkl from main.ipynb)")
     print("="*60)
     
-    app.run(host=Config.HOST, port=Config.PORT, debug=Config.DEBUG)
+    if model_loader.is_loaded:
+        model_info = model_loader.get_model_info()
+        print(f"🏷️  Classes: {model_info['classes']}")
+        print(f"🔢 Total classes: {model_info['num_classes']}")
+        print(f"⚙️  SVM kernel: {model_info['svm_kernel']}")
+    else:
+        print("⚠️  Models not loaded - place .pkl files in models/ folder")
+    
+    print("\n📡 Available endpoints:")
+    print("  - GET  /api/health")
+    print("  - POST /api/verify-face")
+    print("  - GET  /api/model-info")
+    print("="*60)
+    
+    app.run(host='0.0.0.0', port=5000, debug=True)

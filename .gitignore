@@ -1,10 +1,5 @@
-/full_dataset
+# attendance-system-api/.gitignore
 /venv
 /__pycache__
 
 /utils/__pycache__
-/services/__pycache__
-
-/dataset/
-/gpu.py
-/test
