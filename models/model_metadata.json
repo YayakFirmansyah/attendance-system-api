@@ -1,11 +1,15 @@
 {
   "model_type": "SVM",
-  "training_date": "2025-07-05T04:00:52.895262",
+  "training_date": "2025-07-22T09:08:46.220620",
   "data_shape": [
-    765,
+    1239,
     512
   ],
   "classes": [
+    "Abdurrahman Harits Wuqufian Winardi",
+    "Dhiya'uddin Firmansyah",
+    "Ega Rama",
+    "Muhammad 'Ali Murrofid",
     "ainung",
     "akbar",
     "aldi",
@@ -46,21 +50,19 @@
     "praditya",
     "rasya",
     "rifaldi",
-    "satian",
     "syafa",
     "syauqi",
     "wira",
-    "yayak",
     "yudas",
     "zanuar",
     "zidan"
   ],
   "best_params": {
-    "C": 1,
-    "gamma": 1,
+    "C": 10,
+    "gamma": 0.1,
     "kernel": "rbf"
   },
-  "cv_score": 1.0,
+  "cv_score": 0.9979848738642708,
   "test_accuracy": 1.0,
   "train_accuracy": 1.0
 }
