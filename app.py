@@ -86,6 +86,12 @@ def verify_face():
                 'success': False,
                 'message': 'No image provided'
             }), 400
+            
+        # Extract dynamic thresholds with defaults
+        predict_threshold = float(data.get('predict_threshold', 0.15))
+        min_confidence = float(data.get('min_confidence', 0.08))
+        min_gap = float(data.get('min_gap', 0.03))
+        single_class_confidence = float(data.get('single_class_confidence', 0.10))
         
         # Check if models loaded
         if not model_loader.is_loaded:
@@ -154,7 +160,7 @@ def verify_face():
             # ===== SVM CLASSIFICATION WITH TIMING =====
             svm_start = time.process_time()
             predicted_name, recognition_confidence = model_loader.predict(
-                embedding, threshold=0.15  # Threshold rendah untuk SVM
+                embedding, threshold=predict_threshold  # Threshold dinamis dari request
             )
             # Get all predictions untuk analisis
             all_predictions = model_loader.get_all_predictions(embedding)
@@ -169,11 +175,11 @@ def verify_face():
                 sorted_preds = sorted(all_predictions.items(), key=lambda x: x[1], reverse=True)
                 if len(sorted_preds) >= 2:
                     confidence_gap = sorted_preds[0][1] - sorted_preds[1][1]
-                    # Verifikasi jika confidence >= 0.08 DAN gap >= 0.03
-                    is_verified = recognition_confidence >= 0.08 and confidence_gap >= 0.03
+                    # Verifikasi jika confidence >= min_confidence DAN gap >= min_gap
+                    is_verified = recognition_confidence >= min_confidence and confidence_gap >= min_gap
                 else:
-                    # Hanya 1 class, threshold lebih rendah
-                    is_verified = recognition_confidence >= 0.10
+                    # Hanya 1 class, threshold dinamis
+                    is_verified = recognition_confidence >= single_class_confidence
             
             # Hasil untuk face ini dengan timing per-face
             face_result = {
