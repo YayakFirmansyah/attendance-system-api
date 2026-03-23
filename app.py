@@ -1,4 +1,4 @@
-# app.py - SIMPLE VERSION (MTCNN + FaceNet + SVM)
+# app.py - SIMPLE VERSION (MTCNN + FaceNet + SVM) + GPU SUPPORT
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import cv2
@@ -6,6 +6,11 @@ import numpy as np
 import base64
 import os
 from datetime import datetime
+
+# Konfigurasi GPU harus dipanggil SEBELUM import TensorFlow models
+from gpu_config import configure_gpu
+print("🎮 Mengkonfigurasi GPU...")
+configure_gpu()
 
 # Import utils
 from utils.face_detector import FaceDetector
@@ -69,9 +74,9 @@ def health():
 @app.route('/api/verify-face', methods=['POST'])
 def verify_face():
     """
-    Main endpoint untuk face recognition
+    Main endpoint untuk face recognition dengan performance timing
     Input: base64 image
-    Output: detected faces dengan identity predictions
+    Output: detected faces dengan identity predictions + timing metrics
     """
     try:
         # Validate input
@@ -99,20 +104,32 @@ def verify_face():
         
         print(f"📷 Processing image: {image.shape}")
         
-        # Detect faces
+        # ===== MTCNN FACE DETECTION WITH TIMING =====
+        mtcnn_start = cv2.getTickCount()
         faces = face_detector.detect_faces(image)
+        mtcnn_end = cv2.getTickCount()
+        mtcnn_time = (mtcnn_end - mtcnn_start) / cv2.getTickFrequency() * 1000  # milliseconds
         
         if not faces:
             return jsonify({
                 'success': True,
                 'message': 'No faces detected',
-                'results': []
+                'results': [],
+                'timing': {
+                    'mtcnn_detection_ms': round(mtcnn_time, 2),
+                    'facenet_encoding_ms': 0,
+                    'svm_classification_ms': 0,
+                    'total_processing_ms': round(mtcnn_time, 2)
+                }
             })
         
-        print(f"👥 Detected {len(faces)} face(s)")
+        print(f"👥 Detected {len(faces)} face(s) in {mtcnn_time:.2f}ms")
         
-        # Process each face
+        # Process each face dengan timing individual
         results = []
+        total_facenet_time = 0
+        total_svm_time = 0
+        
         for i, face_data in enumerate(faces):
             face_crop = face_data['face']
             box = face_data['box']
@@ -123,18 +140,27 @@ def verify_face():
             if processed_face is None:
                 continue
             
-            # Generate embedding
+            # ===== FACENET ENCODING WITH TIMING =====
+            import time
+            facenet_start = time.perf_counter()
             embedding = face_encoder.encode_face(processed_face)
+            facenet_end = time.perf_counter()
+            facenet_time = (facenet_end - facenet_start) * 1000  # milliseconds
+            total_facenet_time += facenet_time
+            
             if embedding is None:
                 continue
             
-            # Predict identity dengan threshold rendah untuk SVM
+            # ===== SVM CLASSIFICATION WITH TIMING =====
+            svm_start = time.process_time()
             predicted_name, recognition_confidence = model_loader.predict(
                 embedding, threshold=0.15  # Threshold rendah untuk SVM
             )
-            
             # Get all predictions untuk analisis
             all_predictions = model_loader.get_all_predictions(embedding)
+            svm_end = time.process_time()
+            svm_time = (svm_end - svm_start) * 1000  # milliseconds
+            total_svm_time += svm_time
             
             # Enhanced verification logic
             is_verified = False
@@ -148,14 +174,8 @@ def verify_face():
                 else:
                     # Hanya 1 class, threshold lebih rendah
                     is_verified = recognition_confidence >= 0.10
-                    
-                print(f"  🔍 Verification analysis:")
-                print(f"      Confidence: {recognition_confidence:.3f}")
-                if len(sorted_preds) >= 2:
-                    print(f"      Gap: {confidence_gap:.3f}")
-                print(f"      Verified: {is_verified}")
             
-            # Hasil untuk face ini
+            # Hasil untuk face ini dengan timing per-face
             face_result = {
                 'face_id': i + 1,
                 'bounding_box': {
@@ -168,22 +188,41 @@ def verify_face():
                 'predicted_name': predicted_name if is_verified else "unknown",
                 'recognition_confidence': float(recognition_confidence),
                 'verified': is_verified,
-                'student_name': predicted_name if is_verified else None,  # Untuk Laravel compatibility
-                'similarity': float(recognition_confidence),  # Untuk Laravel compatibility
-                'all_predictions': all_predictions
+                'student_name': predicted_name if is_verified else None,  # Laravel compatibility
+                'similarity': float(recognition_confidence),  # Laravel compatibility
+                'all_predictions': all_predictions,
+                'face_timing': {
+                    'facenet_encoding_ms': round(facenet_time, 2),
+                    'svm_classification_ms': round(svm_time, 2)
+                }
             }
             
             results.append(face_result)
             
-            print(f"  👤 Face {i+1}: {predicted_name} ({recognition_confidence:.3f})")
+            print(f"  👤 Face {i+1}: {predicted_name} ({recognition_confidence:.3f}) - FaceNet: {facenet_time:.2f}ms, SVM: {svm_time:.2f}ms")
         
-        # Response
+        # Calculate total processing time
+        total_time = mtcnn_time + total_facenet_time + total_svm_time
+        
+        # Response dengan detailed timing
         response = {
             'success': True,
             'message': f'Processed {len(results)} face(s)',
             'results': results,
             'total_faces': len(results),
-            'verified_faces': len([r for r in results if r['verified']])
+            'verified_faces': len([r for r in results if r['verified']]),
+            'timing': {
+                'mtcnn_detection_ms': round(mtcnn_time, 2),
+                'facenet_encoding_ms': round(total_facenet_time, 2),
+                'svm_classification_ms': round(total_svm_time, 2),
+                'total_processing_ms': round(total_time, 2),
+                'average_per_face_ms': round(total_time / len(results), 2) if results else 0
+            },
+            'performance_breakdown': {
+                'mtcnn_percentage': round((mtcnn_time / total_time) * 100, 1) if total_time > 0 else 0,
+                'facenet_percentage': round((total_facenet_time / total_time) * 100, 1) if total_time > 0 else 0,
+                'svm_percentage': round((total_svm_time / total_time) * 100, 1) if total_time > 0 else 0
+            }
         }
         
         return jsonify(response)
